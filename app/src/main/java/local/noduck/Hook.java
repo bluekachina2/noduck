@@ -9,14 +9,17 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * Stops notification / system sounds from ducking (lowering) your music.
+ * NoDuck:
+ *  1. Stops notification / system sounds from ducking (lowering) your music.
+ *  2. Removes the 3-second countdown of the built-in screen recorder.
+ *  3. Removes the vibration and sound of the screen recorder's start/stop notifications.
  *
- * Android ducks other apps when something requests audio focus with
- * AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK. This hook runs inside system_server and,
- * for notification-type usages only, answers "granted" without registering the
- * request. The focus stack never changes, so nothing is ducked. The sound still
- * plays, it just plays on top of the music.
+ * Each part has an on/off constant below.
  *
+ * Ducking: Android ducks other apps when something requests audio focus with
+ * AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK. The hook runs inside system_server and, for
+ * notification-type usages only, answers "granted" without registering the request.
+ * The sound still plays, it just plays on top of the music.
  * Navigation prompts, assistant, calls, alarms and ringtones are NOT touched.
  */
 public class Hook implements IXposedHookLoadPackage {
@@ -28,6 +31,9 @@ public class Hook implements IXposedHookLoadPackage {
 
     // Set to false to keep the vibration when the screen recorder starts and stops.
     private static final boolean REMOVE_RECORDER_VIBRATION = true;
+
+    // Set to false to keep the notification sound when the screen recorder starts and stops.
+    private static final boolean REMOVE_RECORDER_SOUND = true;
 
     // AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
     private static final int GAIN_TRANSIENT_MAY_DUCK = 3;
@@ -55,19 +61,25 @@ public class Hook implements IXposedHookLoadPackage {
             // system_server
             hookAudioFocus(lpparam);
             if (REMOVE_RECORDER_VIBRATION) {
-                hookRecorderVibration(lpparam);
+                hookRecorderAlert(lpparam, "playVibration");
+            }
+            if (REMOVE_RECORDER_SOUND) {
+                hookRecorderAlert(lpparam, "playSound");
             }
         } else if (REMOVE_RECORDER_COUNTDOWN && "com.android.systemui".equals(lpparam.packageName)) {
             hookRecorderCountdown(lpparam);
+            hookCountDownTimerFallback(lpparam);
         }
     }
+
+    // ---------------------------------------------------------------- screen recorder countdown
 
     /** Makes the screen recorder start right away instead of after the 3-second countdown. */
     private void hookRecorderCountdown(XC_LoadPackage.LoadPackageParam lpparam) {
         Class<?> cls = XposedHelpers.findClassIfExists(
                 "com.android.systemui.screenrecord.RecordingController", lpparam.classLoader);
         if (cls == null) {
-            XposedBridge.log(TAG + "RecordingController not found, countdown not changed");
+            XposedBridge.log(TAG + "RecordingController not found, relying on the timer fallback");
             return;
         }
 
@@ -78,7 +90,7 @@ public class Hook implements IXposedHookLoadPackage {
                     // startCountdown(long ms, long interval, PendingIntent start, PendingIntent stop)
                     if (param.args.length > 0 && param.args[0] instanceof Long) {
                         param.args[0] = 1L;
-                        XposedBridge.log(TAG + "recorder countdown skipped");
+                        XposedBridge.log(TAG + "recorder countdown skipped (startCountdown)");
                     }
                 } catch (Throwable t) {
                     XposedBridge.log(TAG + "countdown hook error: " + t);
@@ -87,25 +99,70 @@ public class Hook implements IXposedHookLoadPackage {
         }).size();
 
         XposedBridge.log(TAG + "hooked " + hooked + " startCountdown overload(s)");
-        if (hooked == 0) {
-            XposedBridge.log(TAG + "WARNING: startCountdown not found, countdown unchanged");
-        }
     }
 
     /**
-     * Blocks the vibration of the screen recorder's notifications (channel "screen_record").
-     * The channel's own settings are locked by the system, so this is done in system_server,
-     * right where the notification vibration would be played. Sound is not touched.
+     * Fallback that does not depend on Motorola's class or method names: inside System UI, any
+     * android.os.CountDownTimer of 1 to 5 seconds that is created from code whose class name
+     * contains "record" is shortened to 1 ms. Every such timer is logged, so if the countdown is
+     * still there the log shows which class creates it.
      */
-    private void hookRecorderVibration(XC_LoadPackage.LoadPackageParam lpparam) {
-        Class<?> cls = XposedHelpers.findClassIfExists(
-                "com.android.server.notification.NotificationManagerService", lpparam.classLoader);
+    private void hookCountDownTimerFallback(XC_LoadPackage.LoadPackageParam lpparam) {
+        Class<?> cls = XposedHelpers.findClassIfExists("android.os.CountDownTimer", lpparam.classLoader);
         if (cls == null) {
-            XposedBridge.log(TAG + "NotificationManagerService not found, vibration not changed");
+            XposedBridge.log(TAG + "CountDownTimer not found, no timer fallback");
             return;
         }
 
-        int hooked = XposedBridge.hookAllMethods(cls, "playVibration", new XC_MethodHook() {
+        int hooked = XposedBridge.hookAllConstructors(cls, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    if (param.args.length < 2 || !(param.args[0] instanceof Long)) {
+                        return;
+                    }
+                    long ms = (Long) param.args[0];
+                    String recordCaller = null;
+                    for (StackTraceElement e : new Throwable().getStackTrace()) {
+                        if (e.getClassName().toLowerCase().contains("record")) {
+                            recordCaller = e.getClassName() + "." + e.getMethodName();
+                            break;
+                        }
+                    }
+                    if (recordCaller == null && ms != 3000L) {
+                        return;
+                    }
+                    XposedBridge.log(TAG + "CountDownTimer ms=" + ms + " interval=" + param.args[1]
+                            + " caller=" + recordCaller);
+                    if (recordCaller != null && ms >= 1000L && ms <= 5000L) {
+                        param.args[0] = 1L;
+                        XposedBridge.log(TAG + "recorder countdown skipped (timer fallback)");
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + "timer fallback error: " + t);
+                }
+            }
+        }).size();
+
+        XposedBridge.log(TAG + "hooked " + hooked + " CountDownTimer constructor(s)");
+    }
+
+    // ------------------------------------------------- screen recorder notification vibration/sound
+
+    /**
+     * Blocks the vibration or sound ("playVibration" / "playSound") of the screen recorder's
+     * notifications (System UI, channel "screen_record"). The channel's own settings are locked by
+     * the system, so this is done in system_server, right where the alert would be played.
+     */
+    private void hookRecorderAlert(XC_LoadPackage.LoadPackageParam lpparam, final String methodName) {
+        Class<?> cls = XposedHelpers.findClassIfExists(
+                "com.android.server.notification.NotificationManagerService", lpparam.classLoader);
+        if (cls == null) {
+            XposedBridge.log(TAG + "NotificationManagerService not found, " + methodName + " unchanged");
+            return;
+        }
+
+        int hooked = XposedBridge.hookAllMethods(cls, methodName, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
                 try {
@@ -121,23 +178,25 @@ public class Hook implements IXposedHookLoadPackage {
                     Object channel = XposedHelpers.callMethod(record, "getChannel");
                     String id = channel == null
                             ? null : (String) XposedHelpers.callMethod(channel, "getId");
-                    XposedBridge.log(TAG + "systemui notification vibration, channel=" + id);
+                    XposedBridge.log(TAG + "systemui notification " + methodName + ", channel=" + id);
                     if (id != null && id.startsWith("screen_record")) {
                         Class<?> rt = ((java.lang.reflect.Method) param.method).getReturnType();
                         param.setResult(rt == boolean.class ? Boolean.FALSE : null);
-                        XposedBridge.log(TAG + "skipped recorder vibration");
+                        XposedBridge.log(TAG + "skipped recorder " + methodName);
                     }
                 } catch (Throwable t) {
-                    XposedBridge.log(TAG + "vibration hook error: " + t);
+                    XposedBridge.log(TAG + methodName + " hook error: " + t);
                 }
             }
         }).size();
 
-        XposedBridge.log(TAG + "hooked " + hooked + " playVibration overload(s)");
+        XposedBridge.log(TAG + "hooked " + hooked + " " + methodName + " overload(s)");
         if (hooked == 0) {
-            XposedBridge.log(TAG + "WARNING: playVibration not found, vibration unchanged");
+            XposedBridge.log(TAG + "WARNING: " + methodName + " not found, unchanged");
         }
     }
+
+    // ------------------------------------------------------------------------------ audio ducking
 
     /** Stops notification / system sounds from ducking music. */
     private void hookAudioFocus(XC_LoadPackage.LoadPackageParam lpparam) {

@@ -54,6 +54,10 @@ Building locally instead: open in Android Studio and build. No extra jars are ne
   Log line: `NoDuck: skipped recorder vibration`.
   Every System UI notification vibration also logs its channel id (`systemui notification
   vibration, channel=...`), which shows what to change if something still vibrates.
+- Sound (v1.4): same idea for `playSound`. Log line: `NoDuck: skipped recorder playSound`.
+- Countdown fallback (v1.4): inside System UI, any `CountDownTimer` of 1-5 s created by code whose
+  class name contains "record" is shortened. It logs `NoDuck: CountDownTimer ms=... caller=...`.
+  If the countdown is still there, that log line names the class that creates it.
 - Each one has an on/off constant at the top of `Hook.java`.
 
 ## Tuning
