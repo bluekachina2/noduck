@@ -1,0 +1,33 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'local.noduck'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'local.noduck'
+        minSdk 29
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Xposed API stubs: compile-only, so they are NOT packaged in the APK.
+    // LSPosed provides the real classes at runtime.
+    compileOnly project(':stubs')
+}
