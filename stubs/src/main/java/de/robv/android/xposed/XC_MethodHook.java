@@ -14,6 +14,7 @@ public abstract class XC_MethodHook {
     public static final class MethodHookParam {
         public Object[] args;
         public Object thisObject;
+        public java.lang.reflect.Member method;
 
         public void setResult(Object result) {
         }

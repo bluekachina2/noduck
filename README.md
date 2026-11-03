@@ -33,8 +33,8 @@ Building locally instead: open in Android Studio and build. No extra jars are ne
 
 ## 2. Install
 
-1. Install the APK.
-2. LSPosed > Modules > NoDuck > turn on, and tick **System Framework** in its scope.
+1. Install the APK (it updates in place over v1.1 or later).
+2. LSPosed > Modules > NoDuck > turn on, and tick **System Framework** and **System UI** in its scope.
 3. Reboot.
 4. LSPosed > Logs > Modules should show: `NoDuck: hooked 1 requestAudioFocus overload(s)`.
 5. Play music, plug the charger. The log shows `NoDuck: skipped duck request` and the music stays at full volume.
@@ -44,6 +44,17 @@ Building locally instead: open in Android Studio and build. No extra jars are ne
 - Hooked 0 overloads: your ROM renamed the method. Send me the log.
 - Bootloop: disable LSPosed from adb or recovery:
   `touch /data/adb/modules/zygisk_lsposed/disable` (run as root), then reboot.
+
+## Screen recorder (v1.2+)
+
+- Countdown: `RecordingController.startCountdown` in System UI is shortened to ~0.
+  Log line: `NoDuck: recorder countdown skipped`.
+- Vibration (v1.3): the recorder's notification channel is locked by the system, so the module
+  skips `NotificationManagerService.playVibration` for System UI's `screen_record` channel.
+  Log line: `NoDuck: skipped recorder vibration`.
+  Every System UI notification vibration also logs its channel id (`systemui notification
+  vibration, channel=...`), which shows what to change if something still vibrates.
+- Each one has an on/off constant at the top of `Hook.java`.
 
 ## Tuning
 
